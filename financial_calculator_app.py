@@ -814,12 +814,304 @@ def sip_vs_emi_profit_loss_calculator():
         })
         st.dataframe(breakdown_df)
 
+def reducing_lumpsum_with_monthly_emi_withdrawal():
+    st.header("🏦 Invest and Withdraw EMI for House Loan Calculator")
+
+    col1, col2 = st.columns(2)
+    with col1:
+        st.subheader("Input Parameters")
+        # Initial Amount (Bank)
+        initial_amount = st.number_input(
+            "Initial Bank Amount (₹)",
+            min_value=0,
+            max_value=100000000,
+            value=1000000,
+            step=10000,
+            format="%d",
+            key="rlme_initial_amount"
+        )
+
+        loan_rate = st.number_input(
+            "Loan Interest Rate (%)",
+            min_value=1.0,
+            max_value=15.0,
+            value=8.5,
+            step=0.1,
+            format="%.2f",
+            key="rlme_loan_rate"
+        )
+
+        invest_rate_diff = st.slider(
+            "Investment Interest Rate Difference vs Loan (%)",
+            min_value=-10.0,
+            max_value=10.0,
+            value=2.0,
+            step=0.1,
+            format="%.2f",
+            key="rlme_invest_rate_diff"
+        )
+
+        invest_rate = loan_rate + invest_rate_diff
+
+        years = st.number_input(
+            "Loan Tenure (Years)",
+            min_value=1,
+            max_value=30,
+            value=15,
+            step=1,
+            key="rlme_years"
+        )
+        months = years * 12
+
+    with col2:
+        st.markdown("""
+        **Scenario:**  
+        - You have ₹N in your bank.
+        - You take a loan of ₹N, paying monthly EMI.
+        - You invest that same ₹N as lumpsum at higher/lower rate.
+        - Every month, you withdraw the EMI amount from your investment to pay loan.
+        - Your investment earns interest each month on the *remaining* balance.
+
+        **This calculator tracks your investment balance over time.**
+        """)
+
+    emi_value = calculate_emi(initial_amount, loan_rate, months)
+
+    # Simulation:
+    investment_balances = []
+    investment_principal = initial_amount
+    invest_rate_monthly = invest_rate / (12 * 100)
+    total_interest_earned = 0.0
+    went_negative_month = None
+
+    for month in range(1, months + 1):
+        # Earn monthly interest on current principal
+        interest_earned = investment_principal * invest_rate_monthly
+        investment_principal += interest_earned
+        # Record interest
+        total_interest_earned += interest_earned
+
+        # Withdraw EMI for loan
+        investment_principal -= emi_value
+
+        investment_balances.append({
+            "Month": month,
+            "Investment Balance": investment_principal,
+            "Interest This Month": interest_earned,
+            "Total Withdrawn": emi_value * month,
+        })
+        # If investment goes negative, note the month
+        if investment_principal < 0 and went_negative_month is None:
+            went_negative_month = month
+
+    final_investment_balance = investment_principal
+
+    st.markdown("---")
+    st.subheader("Results")
+    result_col1, result_col2, result_col3 = st.columns(3)
+    result_col1.metric("Monthly EMI", format_indian_rupees(emi_value))
+    result_col2.metric("Final Investment Amount", format_indian_rupees(final_investment_balance))
+    result_col3.metric("Total Interest Earned", format_indian_rupees(total_interest_earned))
+
+    if final_investment_balance >= 0:
+        st.success(f"You will still have ₹{format_indian_rupees(final_investment_balance)} left after {months} months of EMI withdrawals.")
+    else:
+        st.error(f"Your investment will exhaust (go negative) in month {went_negative_month}.")
+
+    # Plot month-wise investment balance
+    st.markdown("---")
+    st.subheader("Month-wise Investment Balance")
+
+    plot_df = pd.DataFrame(investment_balances)
+    fig = go.Figure()
+    fig.add_trace(go.Scatter(
+        x=plot_df["Month"],
+        y=plot_df["Investment Balance"],
+        mode="lines+markers",
+        name="Investment Balance",
+        line=dict(color="green", width=2),
+        marker=dict(size=4)
+    ))
+    fig.update_layout(
+        title="Investment Balance Over Time (with Monthly EMI Withdrawals)",
+        xaxis_title="Month",
+        yaxis_title="Investment Balance (₹)",
+        height=500,
+        yaxis=dict(tickformat=",.0f"),
+    )
+    st.plotly_chart(fig, use_container_width=True)
+
+    if st.checkbox("Show Detailed Breakdown"):
+        breakdown_df = plot_df.copy()
+        breakdown_df["Investment Balance (₹)"] = breakdown_df["Investment Balance"].apply(format_indian_rupees)
+        breakdown_df["Interest This Month (₹)"] = breakdown_df["Interest This Month"].apply(format_indian_rupees)
+        breakdown_df["Total Withdrawn (₹)"] = breakdown_df["Total Withdrawn"].apply(format_indian_rupees)
+        st.dataframe(breakdown_df[["Month", "Investment Balance (₹)", "Interest This Month (₹)", "Total Withdrawn (₹)"]])
+
+def sip_plus_emi_from_salary_calculator():
+    st.header("🏡 SIP + EMI with Downpayment and Initial Bank Balance")
+
+    col1, col2 = st.columns(2)
+
+    with col1:
+        st.subheader("Input Parameters")
+        home_value = st.number_input(
+            "Price (₹)",
+            min_value=1,
+            max_value=100_000_000,
+            value=1000,
+            step=10000,
+            format="%d",
+            key="salary_home_value"
+        )
+        bank_balance = st.number_input(
+            "Initial Bank Balance (₹)",
+            min_value=0,
+            max_value=100000000,
+            value=1000,
+            step=10000,
+            format="%d",
+            key="salary_bank_balance"
+        )
+        downpayment = st.number_input(
+            "Downpayment (₹)",
+            min_value=0,
+            max_value=int(home_value),
+            value=1,  # Always valid
+            step=10000,
+            format="%d",
+            key="salary_downpayment"
+        )
+        sip_amount_monthly = st.number_input(
+            "Monthly SIP Amount (₹)",
+            min_value=0,
+            max_value=10000000,
+            value=1,
+            step=1000,
+            format="%d",
+            key="salary_monthly_sip"
+        )
+        loan_rate = st.number_input(
+            "Loan Interest Rate (%)",
+            min_value=1.0,
+            max_value=20.0,
+            value=8.5,
+            step=0.1,
+            format="%.2f",
+            key="salary_loan_rate"
+        )
+        years = st.number_input(
+            "Loan Tenure (Years)",
+            min_value=1,
+            max_value=30,
+            value=20,
+            step=1,
+            key="salary_loan_years"
+        )
+        months = years * 12
+        invest_rate_diff = st.slider(
+            "SIP Interest Rate Difference vs Loan (%)",
+            min_value=-10.0,
+            max_value=10.0,
+            value=2.0,
+            step=0.1,
+            format="%.2f",
+            key="salary_invest_rate_diff"
+        )
+        invest_rate = loan_rate + invest_rate_diff
+
+    with col2:
+        remain_balance_after_downpayment = bank_balance - downpayment
+        st.markdown(f"""
+        **Calculation:**
+        - **Total Price:** {format_indian_rupees(home_value)}
+        - **Downpayment:** {format_indian_rupees(downpayment)}
+        - **Initial Bank Balance:** {format_indian_rupees(bank_balance)}
+        - **Bank Balance After Downpayment:** {format_indian_rupees(remain_balance_after_downpayment)}
+        """)
+        st.markdown("""
+        - The loan amount is **Price minus Downpayment**.
+        - You pay an EMI for the loan.
+        - You also invest your chosen amount as Monthly SIP.
+        - SIP earns at chosen rate.
+        - **Profit/Loss = Final SIP - Total EMI paid**
+        """)
+
+    # Calculate Loan Amount
+    loan_amount = home_value - downpayment
+    emi_value = calculate_emi(loan_amount, loan_rate, months)
+    total_emi_paid = emi_value * months
+
+    # SIP results
+    sip_final = sip_final_amount(sip_amount_monthly, invest_rate, months, starting_amount=0)
+    total_sip_invested = sip_amount_monthly * months
+    total_payments = emi_value + sip_amount_monthly  # Monthly total payment
+
+    profit_loss = sip_final - total_emi_paid
+
+    st.markdown("---")
+    st.subheader("Results")
+    rescol1, rescol2, rescol3, rescol4 = st.columns(4)
+    rescol1.metric("Loan Amount", format_indian_rupees(loan_amount))
+    rescol2.metric("Monthly EMI", format_indian_rupees(emi_value))
+    rescol3.metric("Monthly SIP", format_indian_rupees(sip_amount_monthly))
+    rescol4.metric("Final SIP Value", format_indian_rupees(sip_final))
+
+    st.markdown("---")
+    # Display Monthly EMI, SIP & Total Payments
+    st.subheader("Monthly Payments Overview")
+    paycol1, paycol2, paycol3 = st.columns(3)
+    paycol1.metric("Monthly EMI", format_indian_rupees(emi_value))
+    paycol2.metric("Monthly SIP", format_indian_rupees(sip_amount_monthly))
+    paycol3.metric("Total Monthly Payment", format_indian_rupees(total_payments))
+
+    sumcol1, sumcol2, sumcol3, sumcol4 = st.columns(4)
+    sumcol1.metric("Total Downpayment", format_indian_rupees(downpayment))
+    sumcol2.metric("Total EMI Paid", format_indian_rupees(total_emi_paid))
+    sumcol3.metric("Total SIP Invested", format_indian_rupees(total_sip_invested))
+    sumcol4.metric("Remaining Bank Balance", format_indian_rupees(remain_balance_after_downpayment))
+
+    st.markdown("---")
+    st.subheader("Profit / Loss Summary")
+    st.metric("Profit / Loss (SIP Growth - EMI Paid)", format_indian_rupees(profit_loss))
+
+    st.markdown("---")
+    st.subheader("Profit / Loss Over Tenure")
+
+    # Generate SIP data
+    sip_data = generate_sip_data(sip_amount_monthly, invest_rate, months, 0)
+    # Calculate cumulative profit/loss at each month (SIP current value minus cumulative EMI paid)
+    sip_data["Cumulative EMI Paid"] = emi_value * sip_data["Month"]
+    sip_data["Profit / Loss"] = sip_data["Current Value"] - sip_data["Cumulative EMI Paid"]
+
+    fig = go.Figure()
+    fig.add_trace(go.Scatter(
+        x=sip_data['Month'],
+        y=sip_data['Profit / Loss'],
+        mode='lines+markers',
+        name="Profit / Loss Over Time",
+        line=dict(color='orangered', width=2)
+    ))
+    fig.update_layout(
+        title="Profit / Loss Over Time (SIP vs EMI)",
+        xaxis_title="Months",
+        yaxis_title="Profit / Loss (₹)",
+        height=500,
+        yaxis=dict(tickformat=",.0f"),
+    )
+    st.plotly_chart(fig, use_container_width=True)
+
+    if st.checkbox("Show Monthly Breakdown"):
+        # Format additional columns for display
+        sip_data['Cumulative EMI Paid (₹)'] = sip_data["Cumulative EMI Paid"].apply(format_indian_rupees)
+        sip_data['Profit / Loss (₹)'] = sip_data["Profit / Loss"].apply(format_indian_rupees)
+        st.dataframe(sip_data[['Month', 'Invested Amount (₹)', 'Current Value (₹)', 'Gains (₹)', 'Cumulative EMI Paid (₹)', 'Profit / Loss (₹)']])
+
+
 # Main app
 def main():
     st.title("💰 Interactive Financial Calculator")
     st.markdown("---")
-
-    # Sidebar for navigation
     st.sidebar.title("Calculator Type")
     calc_type = st.sidebar.selectbox(
         "Choose Calculator:",
@@ -827,18 +1119,23 @@ def main():
             "SIP Calculator",
             "Lump Sum Calculator",
             "EMI Calculator",
-            "SIP vs EMI Profit/Loss Calculator"  # <-- Add this new option!
+            "SIP vs EMI Profit/Loss Calculator",
+            "Invest Lumpsum with EMI Withdrawals",
+            "SIP + EMI from Monthly Salary"
         ]
     )
-
     if calc_type == "SIP Calculator":
         sip_calculator()
     elif calc_type == "Lump Sum Calculator":
         lump_sum_calculator()
     elif calc_type == "EMI Calculator":
         emi_calculator()
-    else:
+    elif calc_type == "SIP vs EMI Profit/Loss Calculator":
         sip_vs_emi_profit_loss_calculator()
+    elif calc_type == "Invest Lumpsum with EMI Withdrawals":
+        reducing_lumpsum_with_monthly_emi_withdrawal()
+    else:
+        sip_plus_emi_from_salary_calculator()
 
 if __name__ == "__main__":
     main()
