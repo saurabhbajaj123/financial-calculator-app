@@ -1179,11 +1179,10 @@ def sip_plus_emi_from_salary_calculator():
         sip_data['Profit / Loss (₹)'] = sip_data["Profit / Loss"].apply(format_indian_rupees)
         st.dataframe(sip_data[['Month', 'Invested Amount (₹)', 'Current Value (₹)', 'Gains (₹)', 'Cumulative EMI Paid (₹)', 'Profit / Loss (₹)']])
 
-
 # ... existing code ...
 
-def step_up_topup_loan_calculator():
-    st.header("➕ Step-up / Top-up Loan Calculator (Add Loan After 6 Months)")
+def topup_loan_multi_calculator():
+    st.header("➕ Multi Top-up Loan Calculator (Top-ups every 6 months)")
 
     col1, col2 = st.columns([1, 2])
 
@@ -1196,137 +1195,175 @@ def step_up_topup_loan_calculator():
             max_value=30,
             value=3,
             step=1,
-            key="topup_total_years"
+            key="mt_total_years"
         )
         total_months = int(total_years * 12)
 
-        topup_after_months = st.number_input(
-            "Take Additional Loan After (Months)",
-            min_value=1,
-            max_value=max(1, total_months - 1),
-            value=min(6, max(1, total_months - 1)),
-            step=1,
-            key="topup_after_months"
-        )
-
-        loan1_amount = st.number_input(
+        base_loan = st.number_input(
             "Initial Loan Amount (₹)",
             min_value=0,
             max_value=100_000_000,
             value=500_000,
             step=10_000,
             format="%d",
-            key="topup_loan1_amount"
+            key="mt_base_loan"
         )
 
-        loan2_amount = st.number_input(
-            "Additional Loan Amount After Given Months (₹)",
-            min_value=0,
-            max_value=100_000_000,
-            value=200_000,
-            step=10_000,
-            format="%d",
-            key="topup_loan2_amount"
-        )
-
-        rate1 = st.number_input(
+        base_rate = st.number_input(
             "Interest Rate for Initial Loan (%)",
             min_value=0.0,
             max_value=30.0,
             value=8.5,
             step=0.1,
             format="%.2f",
-            key="topup_rate1"
+            key="mt_base_rate"
         )
 
-        rate2 = st.number_input(
-            "Interest Rate for Additional Loan (%)",
+        st.markdown("---")
+        st.subheader("Top-ups")
+
+        topup_interval_months = st.number_input(
+            "Top-up Interval (Months)",
+            min_value=1,
+            max_value=60,
+            value=6,
+            step=1,
+            key="mt_topup_interval"
+        )
+
+        # Max top-ups so we never start a top-up at/after the last month
+        max_topups = max(0, (total_months - 1) // int(topup_interval_months)) if total_months > 1 else 0
+
+        num_topups = st.number_input(
+            "Number of Top-ups",
+            min_value=0,
+            max_value=int(max_topups),
+            value=min(1, int(max_topups)) if max_topups > 0 else 0,
+            step=1,
+            key="mt_num_topups"
+        )
+        num_topups = int(num_topups)
+
+        topup_amount = st.number_input(
+            "Top-up Amount Each Time (₹)",
+            min_value=0,
+            max_value=100_000_000,
+            value=200_000,
+            step=10_000,
+            format="%d",
+            key="mt_topup_amount"
+        )
+
+        topup_rate = st.number_input(
+            "Interest Rate for Top-ups (%)",
             min_value=0.0,
             max_value=30.0,
             value=9.0,
             step=0.1,
             format="%.2f",
-            key="topup_rate2"
+            key="mt_topup_rate"
         )
 
-        remaining_months = max(1, total_months - int(topup_after_months))
+        # --- Compute EMIs ---
+        if total_months <= 0:
+            st.warning("Please enter a valid tenure.")
+            return
 
-        st.markdown("---")
-        st.caption(f"Additional loan tenure will be **{remaining_months} months** (remaining after top-up).")
+        if base_loan <= 0:
+            st.warning("Please enter an initial loan amount.")
+            return
 
-        if loan1_amount > 0 and total_months > 0:
-            emi1 = calculate_emi(loan1_amount, rate1, total_months)
-            total_paid_1 = total_amount_paid(loan1_amount, rate1, total_months)
-            interest_1 = total_paid_1 - loan1_amount
+        base_emi = calculate_emi(base_loan, base_rate, total_months)
 
-            if loan2_amount > 0:
-                emi2 = calculate_emi(loan2_amount, rate2, remaining_months)
-                total_paid_2 = total_amount_paid(loan2_amount, rate2, remaining_months)
-                interest_2 = total_paid_2 - loan2_amount
+        topups = []
+        for i in range(1, num_topups + 1):
+            start_month = i * int(topup_interval_months)  # month index when top-up starts (1-based conceptually)
+            remaining = total_months - start_month
+            if remaining <= 0:
+                break  # no time left
+
+            if topup_amount > 0:
+                emi_i = calculate_emi(topup_amount, topup_rate, remaining)
             else:
-                emi2 = 0.0
-                total_paid_2 = 0.0
-                interest_2 = 0.0
+                emi_i = 0.0
 
-            st.subheader("Results")
-            st.metric("EMI (Initial Loan)", format_indian_rupees(emi1))
-            st.metric("EMI (Additional Loan)", format_indian_rupees(emi2))
-            st.metric("Total EMI After Top-up", format_indian_rupees(emi1 + emi2))
-
-            st.markdown("---")
-            st.metric("Total Interest (Initial Loan)", format_indian_rupees(interest_1))
-            st.metric("Total Interest (Additional Loan)", format_indian_rupees(interest_2))
-            st.metric("Total Interest (Both)", format_indian_rupees(interest_1 + interest_2))
-
-            st.metric("Total Paid (Both)", format_indian_rupees(total_paid_1 + total_paid_2))
-        else:
-            st.warning("Please enter a valid initial loan amount and tenure.")
-
-    with col2:
-        st.subheader("Monthly Outflow Over Time")
-
-        # Build a simple timeline of monthly total payments
-        if total_months > 0:
-            emi1 = calculate_emi(loan1_amount, rate1, total_months) if loan1_amount > 0 else 0.0
-            remaining_months = max(1, total_months - int(topup_after_months))
-            emi2 = calculate_emi(loan2_amount, rate2, remaining_months) if loan2_amount > 0 else 0.0
-
-            months = list(range(1, total_months + 1))
-            total_payment = []
-            for m in months:
-                if m <= int(topup_after_months):
-                    total_payment.append(emi1)
-                else:
-                    total_payment.append(emi1 + emi2)
-
-            df = pd.DataFrame({
-                "Month": months,
-                "Total Monthly Payment": total_payment,
+            topups.append({
+                "Top-up #": i,
+                "Start Month": start_month + 1,  # payment impact from the next month in our simple model
+                "Remaining Months": remaining,
+                "Top-up Amount": topup_amount,
+                "Top-up EMI": emi_i
             })
 
-            fig = go.Figure()
-            fig.add_trace(go.Scatter(
-                x=df["Month"],
-                y=df["Total Monthly Payment"],
-                mode="lines",
-                name="Total Monthly Payment",
-                line=dict(color="darkblue", width=3),
-            ))
-            fig.update_layout(
-                title="Total Monthly Payment (EMI1, then EMI1+EMI2 after Top-up)",
-                xaxis_title="Month",
-                yaxis_title="Amount (₹)",
-                height=450,
-                yaxis=dict(tickformat=",.0f"),
-                hovermode="x unified",
-            )
-            st.plotly_chart(fig, use_container_width=True)
+        total_topup_amount = topup_amount * len(topups)
 
-            if st.checkbox("Show Payment Schedule Table"):
-                df["Total Monthly Payment (₹)"] = df["Total Monthly Payment"].apply(format_indian_rupees)
-                st.dataframe(df[["Month", "Total Monthly Payment (₹)"]])
+        st.subheader("Results Summary")
+        st.metric("Base EMI", format_indian_rupees(base_emi))
+        st.metric("Number of Applied Top-ups", str(len(topups)))
+        st.metric("Total Top-up Principal", format_indian_rupees(total_topup_amount))
 
-# ... existing code ...
+        # Interest totals (approx, by summing each loan independently)
+        base_total_paid = base_emi * total_months
+        base_interest = base_total_paid - base_loan
+
+        topup_total_paid = 0.0
+        topup_interest = 0.0
+        for t in topups:
+            paid = t["Top-up EMI"] * t["Remaining Months"]
+            topup_total_paid += paid
+            topup_interest += max(0.0, paid - t["Top-up Amount"])
+
+        st.markdown("---")
+        st.metric("Total Interest (Base)", format_indian_rupees(base_interest))
+        st.metric("Total Interest (Top-ups)", format_indian_rupees(topup_interest))
+        st.metric("Total Interest (All)", format_indian_rupees(base_interest + topup_interest))
+
+        if len(topups) > 0 and st.checkbox("Show Top-up Details"):
+            df_topups = pd.DataFrame(topups)
+            df_topups["Top-up Amount (₹)"] = df_topups["Top-up Amount"].apply(format_indian_rupees)
+            df_topups["Top-up EMI (₹)"] = df_topups["Top-up EMI"].apply(format_indian_rupees)
+            st.dataframe(df_topups[["Top-up #", "Start Month", "Remaining Months", "Top-up Amount (₹)", "Top-up EMI (₹)"]])
+
+    with col2:
+        st.subheader("Total Monthly Payment Schedule")
+
+        months = list(range(1, total_months + 1))
+        total_payment = []
+
+        # Build total monthly payment = base_emi + sum(topup emis that have started)
+        for m in months:
+            payment_m = base_emi
+            for t in topups:
+                # starts contributing from Start Month (as stored)
+                if m >= int(t["Start Month"]) and m <= total_months:
+                    payment_m += t["Top-up EMI"]
+            total_payment.append(payment_m)
+
+        df = pd.DataFrame({"Month": months, "Total Monthly Payment": total_payment})
+
+        fig = go.Figure()
+        fig.add_trace(go.Scatter(
+            x=df["Month"],
+            y=df["Total Monthly Payment"],
+            mode="lines",
+            name="Total Monthly Payment",
+            line=dict(color="darkblue", width=3),
+        ))
+        fig.update_layout(
+            title="Total Monthly Payment (Base EMI + Active Top-up EMIs)",
+            xaxis_title="Month",
+            yaxis_title="Amount (₹)",
+            height=450,
+            yaxis=dict(tickformat=",.0f"),
+            hovermode="x unified",
+        )
+        st.plotly_chart(fig, use_container_width=True)
+
+        if st.checkbox("Show Payment Schedule Table"):
+            df["Total Monthly Payment (₹)"] = df["Total Monthly Payment"].apply(format_indian_rupees)
+            st.dataframe(df[["Month", "Total Monthly Payment (₹)"]])
+
+
 
 def main():
     st.title("💰 Interactive Financial Calculator")
@@ -1341,7 +1378,7 @@ def main():
             "SIP vs EMI Profit/Loss Calculator",
             "Invest Lumpsum with EMI Withdrawals",
             "SIP + EMI from Monthly Salary",
-            "Top-up Loan After 6 Months"  # << NEW
+            "Multi Top-up Loan (every 6 months)"  # NEW/REPLACE
         ]
     )
 
@@ -1358,38 +1395,8 @@ def main():
     elif calc_type == "SIP + EMI from Monthly Salary":
         sip_plus_emi_from_salary_calculator()
     else:
-        step_up_topup_loan_calculator()  # << NEW
+        topup_loan_multi_calculator()
 
-# ... existing code ...
-
-# # Main app
-# def main():
-#     st.title("💰 Interactive Financial Calculator")
-#     st.markdown("---")
-#     st.sidebar.title("Calculator Type")
-#     calc_type = st.sidebar.selectbox(
-#         "Choose Calculator:",
-#         [
-#             "SIP Calculator",
-#             "Lump Sum Calculator",
-#             "EMI Calculator",
-#             "SIP vs EMI Profit/Loss Calculator",
-#             "Invest Lumpsum with EMI Withdrawals",
-#             "SIP + EMI from Monthly Salary"
-#         ]
-#     )
-#     if calc_type == "SIP Calculator":
-#         sip_calculator()
-#     elif calc_type == "Lump Sum Calculator":
-#         lump_sum_calculator()
-#     elif calc_type == "EMI Calculator":
-#         emi_calculator()
-#     elif calc_type == "SIP vs EMI Profit/Loss Calculator":
-#         sip_vs_emi_profit_loss_calculator()
-#     elif calc_type == "Invest Lumpsum with EMI Withdrawals":
-#         reducing_lumpsum_with_monthly_emi_withdrawal()
-#     else:
-#         sip_plus_emi_from_salary_calculator()
 
 if __name__ == "__main__":
     main()
