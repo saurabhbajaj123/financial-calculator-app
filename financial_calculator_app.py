@@ -195,6 +195,54 @@ def generate_emi_data(principal, annual_rate, tenure_months):
     return pd.DataFrame(data)
 
 
+
+def generate_emi_data_with_extra_payment(principal, annual_rate, tenure_months, extra_payment):
+    """Simulate loan payoff when paying (EMI + extra_payment) every month."""
+    r = annual_rate / (12 * 100)
+    emi = calculate_emi(principal, annual_rate, tenure_months)
+
+    data = []
+    remaining = float(principal)
+    total_interest_paid = 0.0
+    total_paid = 0.0
+
+    month = 0
+    # hard cap to avoid infinite loops with weird inputs
+    max_months = tenure_months * 5 if tenure_months > 0 else 1
+
+    while remaining > 1e-6 and month < max_months:
+        month += 1
+
+        interest = remaining * r if r > 0 else 0.0
+
+        # Proposed payment = emi + extra, but don't overpay beyond what's needed to close the loan.
+        payment = emi + extra_payment
+        payment = min(payment, remaining + interest)
+
+        principal_component = max(0.0, payment - interest)
+        remaining = remaining + interest - payment
+        remaining = max(0.0, remaining)
+
+        total_interest_paid += interest
+        total_paid += payment
+
+        data.append({
+            "Month": month,
+            "Payment": payment,
+            "EMI": emi,
+            "Extra Payment": extra_payment,
+            "Principal Component": principal_component,
+            "Interest Component": interest,
+            "Remaining Principal": remaining,
+            "Total Interest Paid": total_interest_paid,
+            "Total Paid": total_paid,
+            "Payment (₹)": format_indian_rupees(payment),
+            "Remaining Principal (₹)": format_indian_rupees(remaining),
+        })
+
+    return pd.DataFrame(data)
+
+
 def sip_calculator():
     st.header("📈 SIP (Systematic Investment Plan) Calculator")
     
@@ -517,20 +565,20 @@ def lump_sum_calculator():
 
 def emi_calculator():
     st.header("🏠 EMI (Loan) Calculator")
-    
+
     col1, col2 = st.columns([1, 2])
-    
+
     with col1:
         st.subheader("Input Parameters")
-        
+
         # Loan amount
         col1a, col1b = st.columns([3, 1])
         with col1a:
             principal = st.slider(
-                "Loan Amount (₹)", 
-                min_value=0, 
-                max_value=100000000, 
-                value=500000, 
+                "Loan Amount (₹)",
+                min_value=0,
+                max_value=100000000,
+                value=500000,
                 step=100000,
                 format="%d",
                 key="emi_principal_slider"
@@ -544,20 +592,19 @@ def emi_calculator():
                 step=10000,
                 key="emi_principal_input"
             )
-        
-        # Use the input box value as the final value
+
         principal = principal_input
         st.info(f"🏠 **Selected Loan Amount:** {format_indian_rupees(principal)}")
         st.write("")
-        
+
         # Annual interest rate
         col2a, col2b = st.columns([3, 1])
         with col2a:
             annual_rate = st.slider(
-                "Annual Interest Rate (%)", 
-                min_value=1.0, 
-                max_value=20.0, 
-                value=8.5, 
+                "Annual Interest Rate (%)",
+                min_value=1.0,
+                max_value=20.0,
+                value=8.5,
                 step=0.25,
                 key="emi_rate_slider"
             )
@@ -571,19 +618,18 @@ def emi_calculator():
                 format="%.2f",
                 key="emi_rate_input"
             )
-        
-        # Use the input box value as the final value
+
         annual_rate = annual_rate_input
         st.write("")
-        
+
         # Loan tenure
         col3a, col3b = st.columns([3, 1])
         with col3a:
             years = st.slider(
-                "Loan Tenure (Years)", 
-                min_value=1, 
-                max_value=30, 
-                value=5, 
+                "Loan Tenure (Years)",
+                min_value=1,
+                max_value=30,
+                value=5,
                 step=1,
                 key="emi_years_slider"
             )
@@ -596,35 +642,57 @@ def emi_calculator():
                 step=1,
                 key="emi_years_input"
             )
-        
-        # Use the input box value as the final value
+
         years = years_input
-        
         tenure_months = years * 12
-        
-        # Calculate results
+
+        st.write("")
+        st.subheader("Prepayment / Pay More Than EMI")
+
+        extra_payment = st.number_input(
+            "Extra Payment per Month (₹)",
+            min_value=0.0,
+            max_value=100000000.0,
+            value=0.0,
+            step=1000.0,
+            format="%.2f",
+            key="emi_extra_payment"
+        )
+
         if principal > 0:
             emi = calculate_emi(principal, annual_rate, tenure_months)
             total_paid = total_amount_paid(principal, annual_rate, tenure_months)
             total_interest = total_paid - principal
-            
-            st.subheader("Results")
+
+            st.subheader("Results (Original)")
             st.metric("Monthly EMI", format_indian_rupees(emi))
             st.metric("Total Amount Paid", format_indian_rupees(total_paid))
             st.metric("Total Interest Paid", format_indian_rupees(total_interest))
-            st.metric("Interest as % of Principal", f"{(total_interest/principal)*100:.2f}%")
+
+            # Extra payment simulation
+            if extra_payment > 0:
+                sim_df = generate_emi_data_with_extra_payment(principal, annual_rate, tenure_months, extra_payment)
+                new_months = int(sim_df["Month"].iloc[-1])
+                new_total_paid = float(sim_df["Total Paid"].iloc[-1])
+                new_total_interest = float(sim_df["Total Interest Paid"].iloc[-1])
+
+                st.subheader("Results (With Extra Payment)")
+                st.metric("Monthly Payment (EMI + Extra)", format_indian_rupees(emi + extra_payment))
+                st.metric("New Payoff Time", f"{new_months} months ({new_months/12:.2f} years)")
+                st.metric("New Total Interest Paid", format_indian_rupees(new_total_interest))
+                st.metric("Interest Saved", format_indian_rupees(total_interest - new_total_interest))
+            else:
+                sim_df = None
         else:
             st.warning("Please enter a loan amount.")
-    
+            sim_df = None
+
     with col2:
         st.subheader("EMI Breakdown Over Time")
-        
-        # Generate data for plotting
+
         emi_data = generate_emi_data(principal, annual_rate, tenure_months)
-        
-        # Create interactive plot
+
         fig = go.Figure()
-        
         fig.add_trace(go.Scatter(
             x=emi_data['Month'],
             y=emi_data['Principal Component'],
@@ -633,7 +701,6 @@ def emi_calculator():
             stackgroup='one',
             line=dict(color='blue')
         ))
-        
         fig.add_trace(go.Scatter(
             x=emi_data['Month'],
             y=emi_data['Interest Component'],
@@ -642,7 +709,6 @@ def emi_calculator():
             stackgroup='one',
             line=dict(color='red')
         ))
-        
         fig.update_layout(
             title="EMI Principal vs Interest Over Time",
             xaxis_title="Months",
@@ -651,36 +717,42 @@ def emi_calculator():
             height=400,
             yaxis=dict(tickformat=",.0f")
         )
-        
         st.plotly_chart(fig, use_container_width=True)
-        
-        # Remaining principal plot
+
+        # Remaining principal plot (original vs with extra)
         fig2 = go.Figure()
-        
         fig2.add_trace(go.Scatter(
             x=emi_data['Month'],
             y=emi_data['Remaining Principal'],
             mode='lines',
-            name='Remaining Principal',
+            name='Remaining Principal (Original)',
             line=dict(color='purple', width=3),
-            fill='tozeroy'
         ))
-        
+
+        if sim_df is not None:
+            fig2.add_trace(go.Scatter(
+                x=sim_df["Month"],
+                y=sim_df["Remaining Principal"],
+                mode='lines',
+                name='Remaining Principal (With Extra)',
+                line=dict(color='green', width=3),
+            ))
+
         fig2.update_layout(
             title="Outstanding Loan Amount Over Time",
             xaxis_title="Months",
             yaxis_title="Remaining Principal (₹)",
-            height=300,
+            height=350,
             yaxis=dict(tickformat=",.0f")
         )
-        
         st.plotly_chart(fig2, use_container_width=True)
-        
-        # Show monthly breakdown
+
         if st.checkbox("Show Monthly Breakdown"):
             display_columns = ['Month', 'EMI (₹)', 'Principal Component (₹)', 'Interest Component (₹)', 'Remaining Principal (₹)']
             st.dataframe(emi_data[display_columns])
 
+        if sim_df is not None and st.checkbox("Show Breakdown (With Extra Payment)"):
+            st.dataframe(sim_df[["Month", "Payment (₹)", "Remaining Principal (₹)"]])
 
 def sip_vs_emi_profit_loss_calculator():
     st.header("⚖️ SIP vs EMI Profit/Loss Calculator")
