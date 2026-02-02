@@ -1323,47 +1323,199 @@ def topup_loan_multi_calculator():
             df_topups["Top-up Amount (₹)"] = df_topups["Top-up Amount"].apply(format_indian_rupees)
             df_topups["Top-up EMI (₹)"] = df_topups["Top-up EMI"].apply(format_indian_rupees)
             st.dataframe(df_topups[["Top-up #", "Start Month", "Remaining Months", "Top-up Amount (₹)", "Top-up EMI (₹)"]])
+        with col2:
+            st.subheader("Payment, Interest, and Outstanding Over Time")
 
-    with col2:
-        st.subheader("Total Monthly Payment Schedule")
+            agg = build_multi_topup_aggregate_schedule(
+                base_loan=base_loan,
+                base_rate=base_rate,
+                total_months=total_months,
+                topup_amount=topup_amount,
+                topup_rate=topup_rate,
+                topup_interval_months=topup_interval_months,
+                num_topups=num_topups
+            )
 
-        months = list(range(1, total_months + 1))
-        total_payment = []
+            # Chart 1: Monthly Payment + Monthly Interest + Monthly Principal Paid
+            fig = go.Figure()
+            fig.add_trace(go.Scatter(
+                x=agg["Month"], y=agg["TotalPayment"],
+                mode="lines", name="Total EMI Paid (Monthly Payment)",
+                line=dict(color="darkblue", width=3),
+            ))
+            fig.add_trace(go.Scatter(
+                x=agg["Month"], y=agg["TotalInterest"],
+                mode="lines", name="Interest Paid (Monthly)",
+                line=dict(color="red", width=2),
+            ))
+            fig.add_trace(go.Scatter(
+                x=agg["Month"], y=agg["TotalPrincipalPaid"],
+                mode="lines", name="Principal Paid (Monthly)",
+                line=dict(color="green", width=2),
+            ))
+            fig.update_layout(
+                title="Monthly Payment vs Interest vs Principal (All Loans Combined)",
+                xaxis_title="Month",
+                yaxis_title="Amount (₹)",
+                height=450,
+                yaxis=dict(tickformat=",.0f"),
+                hovermode="x unified",
+                legend=dict(orientation="h")
+            )
+            st.plotly_chart(fig, use_container_width=True)
 
-        # Build total monthly payment = base_emi + sum(topup emis that have started)
-        for m in months:
-            payment_m = base_emi
-            for t in topups:
-                # starts contributing from Start Month (as stored)
-                if m >= int(t["Start Month"]) and m <= total_months:
-                    payment_m += t["Top-up EMI"]
-            total_payment.append(payment_m)
+            # Chart 2: Outstanding Principal Remaining (Total)
+            fig2 = go.Figure()
+            fig2.add_trace(go.Scatter(
+                x=agg["Month"], y=agg["TotalRemaining"],
+                mode="lines", name="Total Principal Remaining (Outstanding)",
+                line=dict(color="purple", width=3),
+                fill="tozeroy"
+            ))
+            fig2.update_layout(
+                title="Total Outstanding Principal Over Time",
+                xaxis_title="Month",
+                yaxis_title="Outstanding (₹)",
+                height=350,
+                yaxis=dict(tickformat=",.0f"),
+                hovermode="x unified",
+            )
+            st.plotly_chart(fig2, use_container_width=True)
 
-        df = pd.DataFrame({"Month": months, "Total Monthly Payment": total_payment})
+            # Optional: Cumulative interest
+            if st.checkbox("Show Cumulative Interest Paid"):
+                fig3 = go.Figure()
+                fig3.add_trace(go.Scatter(
+                    x=agg["Month"], y=agg["CumInterest"],
+                    mode="lines", name="Cumulative Interest Paid",
+                    line=dict(color="orangered", width=3),
+                ))
+                fig3.update_layout(
+                    title="Cumulative Interest Paid Over Time (All Loans Combined)",
+                    xaxis_title="Month",
+                    yaxis_title="Cumulative Interest (₹)",
+                    height=350,
+                    yaxis=dict(tickformat=",.0f"),
+                    hovermode="x unified",
+                )
+                st.plotly_chart(fig3, use_container_width=True)
 
-        fig = go.Figure()
-        fig.add_trace(go.Scatter(
-            x=df["Month"],
-            y=df["Total Monthly Payment"],
-            mode="lines",
-            name="Total Monthly Payment",
-            line=dict(color="darkblue", width=3),
-        ))
-        fig.update_layout(
-            title="Total Monthly Payment (Base EMI + Active Top-up EMIs)",
-            xaxis_title="Month",
-            yaxis_title="Amount (₹)",
-            height=450,
-            yaxis=dict(tickformat=",.0f"),
-            hovermode="x unified",
-        )
-        st.plotly_chart(fig, use_container_width=True)
+            if st.checkbox("Show Full Combined Schedule Table"):
+                df = agg.copy()
+                df["TotalPayment (₹)"] = df["TotalPayment"].apply(format_indian_rupees)
+                df["TotalInterest (₹)"] = df["TotalInterest"].apply(format_indian_rupees)
+                df["TotalPrincipalPaid (₹)"] = df["TotalPrincipalPaid"].apply(format_indian_rupees)
+                df["TotalRemaining (₹)"] = df["TotalRemaining"].apply(format_indian_rupees)
+                df["CumInterest (₹)"] = df["CumInterest"].apply(format_indian_rupees)
+                st.dataframe(df[["Month", "TotalPayment (₹)", "TotalInterest (₹)", "TotalPrincipalPaid (₹)", "TotalRemaining (₹)", "CumInterest (₹)"]])
+def simulate_loan_schedule(principal, annual_rate, tenure_months):
+    """
+    Returns a month-wise schedule for a single loan:
+    Month, Payment, Interest, PrincipalPaid, Remaining
+    """
+    principal = float(principal)
+    tenure_months = int(tenure_months)
+    r = annual_rate / (12 * 100)
+    emi = calculate_emi(principal, annual_rate, tenure_months) if principal > 0 and tenure_months > 0 else 0.0
 
-        if st.checkbox("Show Payment Schedule Table"):
-            df["Total Monthly Payment (₹)"] = df["Total Monthly Payment"].apply(format_indian_rupees)
-            st.dataframe(df[["Month", "Total Monthly Payment (₹)"]])
+    rows = []
+    remaining = principal
+
+    for m in range(1, tenure_months + 1):
+        if remaining <= 1e-6:
+            break
+
+        interest = remaining * r if r > 0 else 0.0
+        payment = min(emi, remaining + interest)  # avoid overpay in last month
+        principal_paid = max(0.0, payment - interest)
+        remaining = max(0.0, remaining + interest - payment)
+
+        rows.append({
+            "Month": m,
+            "Payment": payment,
+            "Interest": interest,
+            "PrincipalPaid": principal_paid,
+            "Remaining": remaining,
+        })
+
+    return pd.DataFrame(rows)
 
 
+def build_multi_topup_aggregate_schedule(
+    base_loan, base_rate, total_months,
+    topup_amount, topup_rate, topup_interval_months, num_topups
+):
+    """
+    Builds an aggregated schedule for base loan + N top-ups taken every interval months.
+    Each top-up is treated as a separate loan starting at its start month and running for remaining tenure.
+    Returns DataFrame with Month, TotalPayment, TotalInterest, TotalPrincipalPaid, TotalRemaining, CumInterest
+    """
+    total_months = int(total_months)
+    topup_interval_months = int(topup_interval_months)
+    num_topups = int(num_topups)
+
+    # Base schedule starting at month 1
+    base_df = simulate_loan_schedule(base_loan, base_rate, total_months)
+    base_df["AbsMonth"] = base_df["Month"]  # absolute month
+
+    loan_schedules = [base_df[["AbsMonth", "Payment", "Interest", "PrincipalPaid", "Remaining"]].copy()]
+
+    # Top-ups
+    for i in range(1, num_topups + 1):
+        start = i * topup_interval_months  # top-up taken after 'start' months
+        remaining_months = total_months - start
+        if remaining_months <= 0:
+            break
+        if topup_amount <= 0:
+            continue
+
+        tdf = simulate_loan_schedule(topup_amount, topup_rate, remaining_months)
+        # shift to absolute months; first payment considered next month (start+1)
+        tdf["AbsMonth"] = tdf["Month"] + start
+        loan_schedules.append(tdf[["AbsMonth", "Payment", "Interest", "PrincipalPaid", "Remaining"]].copy())
+
+    # Aggregate month-by-month
+    months = pd.DataFrame({"Month": list(range(1, total_months + 1))})
+
+    # Sum payments/interest/principalpaid across active loans
+    total_payment = []
+    total_interest = []
+    total_principal_paid = []
+    total_remaining = []
+
+    for m in range(1, total_months + 1):
+        pay_m = 0.0
+        int_m = 0.0
+        prin_m = 0.0
+        rem_m = 0.0
+
+        for df in loan_schedules:
+            # For each loan, locate row where AbsMonth == m
+            row = df[df["AbsMonth"] == m]
+            if not row.empty:
+                pay_m += float(row["Payment"].iloc[0])
+                int_m += float(row["Interest"].iloc[0])
+                prin_m += float(row["PrincipalPaid"].iloc[0])
+                rem_m += float(row["Remaining"].iloc[0])
+            else:
+                # If loan already started earlier and hasn't ended, remaining is carried by last available row < m
+                # This keeps TotalRemaining meaningful even in months where a loan has no row (e.g. loan paid off early).
+                past = df[df["AbsMonth"] < m]
+                if not past.empty:
+                    rem_m += float(past["Remaining"].iloc[-1])
+
+        total_payment.append(pay_m)
+        total_interest.append(int_m)
+        total_principal_paid.append(prin_m)
+        total_remaining.append(rem_m)
+
+    months["TotalPayment"] = total_payment
+    months["TotalInterest"] = total_interest
+    months["TotalPrincipalPaid"] = total_principal_paid
+    months["TotalRemaining"] = total_remaining
+    months["CumInterest"] = months["TotalInterest"].cumsum()
+
+    return months
 
 def main():
     st.title("💰 Interactive Financial Calculator")
